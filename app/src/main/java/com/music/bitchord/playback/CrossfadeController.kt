@@ -171,17 +171,6 @@ class CrossfadeController(
      */
     private val onArmIncoming: (MediaItem, String?) -> Unit = { _, _ -> },
     /**
-     * A smooth headroom trim for both players while two tracks overlap:
-     * `1 / sqrt(incomingGain + outgoingGain)`, 1 otherwise.
-     *
-     * Equal-power gains sum to more than 1 — up to 1.41 at the midpoint — so
-     * two loud masters peaking together pass full scale in the platform mixer
-     * and are hard-clipped into a crackle. The trim holds that to 1.19 at a
-     * cost of at most 1.5 dB mid-blend. A gain rather than a limiter on
-     * purpose — see [LoudnessProcessor].
-     */
-    private val onBlendHeadroom: (Float) -> Unit = {},
-    /**
      * True while the service is mid-swap between two versions/cuts of the
      * current track. That swap fades across the same active/standby pair
      * this controller does, so the two must never run at once — arming a
@@ -691,7 +680,6 @@ class CrossfadeController(
         AppSettings.smartMixBlend.value = null
         filters.open()
         filters.parkEchoes()
-        onBlendHeadroom(1f)
     }
 
     // ---- Entry points -------------------------------------------------------
@@ -1515,20 +1503,21 @@ class CrossfadeController(
         // outgoing track runs out under it.
         if (!handedOff && player.playbackState == Player.STATE_IDLE) return bail()
 
-        // Faders act at the speaker; everything in the DSP chain — the filters
-        // and the headroom trim — acts where each sink is writing, its lead
-        // ahead of that. So those are aimed at the blend as it will be when the
-        // audio they touch is played, each side by its own lead.
+        // Faders act at the speaker; the filters in the DSP chain act where
+        // each sink is writing, its lead ahead of that. So the filters are
+        // aimed at the blend as it will be when the audio they touch is played,
+        // each side by its own lead.
         val incomingAt = ((elapsed + tracks.incomingLeadMs()) / wallSpan).coerceIn(0f, 1f)
         val outgoingAt = (progress + tracks.outgoingLeadMs() / span.toFloat()).coerceIn(0f, 1f)
 
         val rise = mixRise(progress)
         val fall = mixFall(progress)
-        player.volume = rise
-        out.volume = fall
-        onBlendHeadroom(
-            headroomFor(mixRise(outgoingAt), outgoingLevel(elapsed / wallSpan + tracks.outgoingLeadMs() / span.toFloat(), wallSpan)),
-        )
+        // The headroom rides on the faders, at the progress being heard, so it
+        // lands on the same audio the gains do, including what both players
+        // buffered before the blend began. See [blendHeadroom].
+        val trim = blendHeadroom(rise, outgoingLevel(progress, wallSpan))
+        player.volume = rise * trim
+        out.volume = fall * trim
         if (render.phaseLock) holdPhase(out, player, progress)
 
         // The midpoint, or sooner if the outgoing track is about to run out
@@ -1699,8 +1688,11 @@ class CrossfadeController(
         val progress = (SystemClock.elapsedRealtime() - bailStartedAt).toFloat() / BAIL_MS
         if (progress < 1f) {
             val fall = bailFromGain * fallGain(progress)
-            leaving.volume = fall
-            onBlendHeadroom(headroomFor(1f, fall))
+            // The track staying is at full on its fader; the headroom it shares
+            // with the one leaving lifts as that one goes.
+            val trim = blendHeadroom(1f, fall)
+            leaving.volume = fall * trim
+            stayingOnBail()?.volume = trim
             return
         }
         finish()
@@ -1735,14 +1727,18 @@ class CrossfadeController(
         // this ramp exists to avoid.
         filters.open()
         // Whichever track is *not* the session's is the one ramped away: the
-        // outgoing tail after the handoff, the incoming track before it.
-        if (handedOff) incoming?.volume = 1f else outgoing?.volume = 1f
+        // outgoing tail after the handoff, the incoming track before it. The
+        // one staying comes straight up to full, under the headroom it still
+        // shares with the one leaving (see [driveBail]).
         bailFromGain = leavingOnBail()?.volume ?: 0f
+        stayingOnBail()?.volume = blendHeadroom(1f, bailFromGain)
         bailStartedAt = SystemClock.elapsedRealtime()
         phase = Phase.BAILING
     }
 
     private fun leavingOnBail(): ExoPlayer? = if (handedOff) outgoing else incoming
+
+    private fun stayingOnBail(): ExoPlayer? = if (handedOff) incoming else outgoing
 
     private fun finish() {
         if (phase != Phase.IDLE) {
@@ -1768,7 +1764,6 @@ class CrossfadeController(
         if (handedOff && render.echo) outgoing?.volume = 0f
         filters.open()
         filters.parkEchoes()
-        onBlendHeadroom(1f)
         render = Render()
         nudgeUntil = 0L
 
@@ -2282,7 +2277,7 @@ class CrossfadeController(
      *    vocals collide;
      *  - a filter ride brings it up a little early, behind its high-pass.
      *
-     * [headroomFor] keeps two faders at full from summing past full scale.
+     * [blendHeadroom] keeps two faders at full from summing past full scale.
      */
     private fun mixRise(progress: Float): Float {
         if (!render.advanced) return riseGain(progress)
@@ -2600,12 +2595,6 @@ class CrossfadeController(
                 if (player === active() && phase == Phase.IDLE) player.volume = level
             }
         }
-    }
-
-    /** See [onBlendHeadroom]. */
-    private fun headroomFor(incomingGain: Float, outgoingGain: Float): Float {
-        val sum = incomingGain + outgoingGain
-        return if (sum <= 1f) 1f else 1f / kotlin.math.sqrt(sum)
     }
 
     // There is deliberately no second, equal-gain pair here any more. It existed

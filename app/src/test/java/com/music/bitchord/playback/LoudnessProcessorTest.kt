@@ -58,22 +58,6 @@ class LoudnessProcessorTest {
     }
 
     @Test
-    fun blendTrimIsAPlainGainThatNeverReshapesLoudTracks() {
-        // The midpoint of a blend: trim 1/sqrt(1.414).
-        val trim = 1f / kotlin.math.sqrt(1.4142135f)
-        val proc = processor(emptyMap()).apply { track("a", null) }
-        proc.setBlendTrim(trim)
-        proc.process(sine(0.98f))
-        val block = sine(0.98f)
-        val before = block.samples.copyOf()
-        proc.process(block)
-        // Every sample scaled by the same factor: no limiting, no distortion.
-        for (i in 0 until block.sampleCount) {
-            assertEquals(before[i] * trim, block.samples[i], 1e-4f)
-        }
-    }
-
-    @Test
     fun gaplessBoundarySwitchesToTheNextTracksGain() {
         val proc = processor(mapOf("a" to 0.5f, "b" to 0.25f)).apply { track("a", "b") }
         proc.process(sine(0.8f))

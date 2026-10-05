@@ -165,7 +165,6 @@ import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.pow
 import kotlin.math.sin
-import kotlin.math.sqrt
 import kotlin.math.roundToInt
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
@@ -1756,11 +1755,6 @@ class PlaybackService : MediaLibraryService() {
             // levelled on its own sink before it renders a frame, and the
             // outgoing track keeps its own gain for the rest of the blend.
             onArmIncoming = { item, nextId -> spareLoudness().track(item.mediaId, nextId) },
-            // Both sinks, not a role: the trim is about what the pair sums to.
-            onBlendHeadroom = { trim ->
-                loudnessA.setBlendTrim(trim)
-                loudnessB.setBlendTrim(trim)
-            },
             versionSwapActive = { versionSwapJob?.isActive == true },
         )
 
@@ -2115,14 +2109,14 @@ class PlaybackService : MediaLibraryService() {
 
                     val inGain = sin(progress * (PI / 2.0)).toFloat()
                     val outGain = cos(progress * (PI / 2.0)).toFloat()
-                    standbyPlayer.volume = inGain
-                    activePlayer.volume = outGain
                     // The same headroom a crossfade takes, and for the same
-                    // reason — see [LoudnessProcessor]. More so here: two
-                    // versions of one song line up peak for peak.
-                    val swapTrim = 1f / sqrt((inGain + outGain).coerceAtLeast(1f))
-                    loudnessA.setBlendTrim(swapTrim)
-                    loudnessB.setBlendTrim(swapTrim)
+                    // reason (see [blendHeadroom]). More so here: two versions
+                    // of one song line up peak for peak. On the faders, where
+                    // the swap is heard; the DSP chain runs a buffer ahead of
+                    // that, and a trim there would land after the swap was over.
+                    val swapTrim = blendHeadroom(inGain, outGain)
+                    standbyPlayer.volume = inGain * swapTrim
+                    activePlayer.volume = outGain * swapTrim
 
                     if (progress >= 1f) break
                     delay(16)
@@ -2132,8 +2126,6 @@ class PlaybackService : MediaLibraryService() {
                 adoptPlayerForVersionSwap(outgoing = activePlayer, incoming = standbyPlayer)
                 onSwapCommitted?.invoke()
             } finally {
-                loudnessA.setBlendTrim(1f)
-                loudnessB.setBlendTrim(1f)
                 if (!smartAlignEnabled) {
                     AppSettings.smartMixInProgress.value = false
                 }
