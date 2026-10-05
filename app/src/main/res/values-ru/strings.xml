@@ -206,6 +206,9 @@
     <string name="blocking">Блокирует</string>
     <string name="crossfade">Кроссфейд</string>
     <string name="crossfade_subtitle">Плавно переходит от одного трека к другому</string>
+    <string name="song_transitions">Переходы между треками</string>
+    <string name="crossfade_style_subtitle">Каждый трек затухает, пока нарастает следующий, за заданное время</string>
+    <string name="crossfade_duration">Длительность кроссфейда</string>
     <string name="automix">Автомикс [БЕТА]</string>
     <string name="skip_silence">Пропускать тишину</string>
     <string name="skip_silence_subtitle">Обрезает паузы длиннее секунды</string>

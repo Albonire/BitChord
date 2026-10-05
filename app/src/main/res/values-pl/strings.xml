@@ -194,6 +194,9 @@
     <string name="blocking">Blokowanie</string>
     <string name="crossfade">Crossfade</string>
     <string name="crossfade_subtitle">Płynne przejścia między utworami</string>
+    <string name="song_transitions">Przejścia między utworami</string>
+    <string name="crossfade_style_subtitle">Ścisza każdy utwór, gdy następny narasta, przez ustalony czas</string>
+    <string name="crossfade_duration">Czas trwania crossfade</string>
     <string name="automix">Automix [BETA]</string>
     <string name="skip_silence">Pomiń ciszę</string>
     <string name="skip_silence_subtitle">Przycinanie przerw dłuższych niż sekunda</string>

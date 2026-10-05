@@ -203,6 +203,9 @@
     <string name="blocking">กำลังบล็อก</string>
     <string name="crossfade">ครอสเฟด</string>
     <string name="crossfade_subtitle">ผสานเพลงหนึ่งเข้ากับเพลงถัดไป</string>
+    <string name="song_transitions">การเปลี่ยนเพลง</string>
+    <string name="crossfade_style_subtitle">ค่อยๆ ลดเสียงเพลงปัจจุบันขณะที่เพลงถัดไปค่อยๆ ดังขึ้น ตามเวลาที่กำหนด</string>
+    <string name="crossfade_duration">ระยะเวลาครอสเฟด</string>
     <string name="automix">Automix [เบต้า]</string>
     <string name="automix_performance">ประสิทธิภาพ Automix</string>
     <string name="automix_performance_subtitle">กำหนดปริมาณ CPU ที่ใช้วิเคราะห์ในพื้นหลัง</string>

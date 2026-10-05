@@ -887,9 +887,10 @@ class CrossfadeController(
         // Only used before analysis lands, or when the evidence is too weak
         // for more than a plain fade (see [TransitionTier.PLAIN_CROSSFADE]):
         // once real analysis is available, [planTransition] sizes the overlap
-        // itself from tempo and structure and ignores this entirely. Honours
-        // the manual slider if the listener also set one, so the two settings
-        // don't fight; falls back to a fixed length when it's at "Off".
+        // itself from tempo and structure and ignores this entirely. It is the
+        // Crossfade length the listener chose, which [SongTransitions] keeps
+        // handing over under Automix for exactly this; the fixed length only
+        // answers if that ever reads 0.
         val fallbackSeconds = configuredFadeMs().takeIf { it > 0L }
             ?.div(1000.0)
             ?: DEFAULT_SMART_FALLBACK_SECONDS

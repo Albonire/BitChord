@@ -332,6 +332,32 @@ object BitChordIcons {
         }.build()
     }
 
+    /**
+     * Two fades crossing: one track falling away as the next one rises, the
+     * shape Apple Music draws beside Crossfade. Song transitions' Settings row.
+     */
+    val Crossfade: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "bc_crossfade",
+            defaultWidth = 24.dp, defaultHeight = 24.dp,
+            viewportWidth = 24f, viewportHeight = 24f,
+        ).apply {
+            path(
+                stroke = stroke,
+                strokeLineWidth = STROKE,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round,
+            ) {
+                // Leaving: full on the left, gone on the right.
+                moveTo(3f, 6.5f)
+                curveTo(10f, 6.5f, 14f, 17.5f, 21f, 17.5f)
+                // Arriving, crossing it at the centre.
+                moveTo(3f, 17.5f)
+                curveTo(10f, 17.5f, 14f, 6.5f, 21f, 6.5f)
+            }
+        }.build()
+    }
+
     /** Beamed pair of notes, for instrumental stretches in the lyrics. */
     val MusicNote: ImageVector by lazy {
         ImageVector.Builder(
