@@ -591,6 +591,12 @@ class PlaybackService : MediaLibraryService() {
     private val loudnessB = LoudnessProcessor().apply { gainFor = ::loudnessGainFor }
     private var loudnessRetryJob: Job? = null
 
+    /**
+     * When each track was last resolved ahead for its loudness figure, from
+     * [SystemClock.elapsedRealtime]. See [warmLoudnessFigures].
+     */
+    private val loudnessWarmups = ConcurrentHashMap<String, Long>()
+
     /** The platform audio session currently advertised to system audio tools. */
     private var advertisedAudioEffectSessionId: Int = C.AUDIO_SESSION_ID_UNSET
 
@@ -1067,6 +1073,7 @@ class PlaybackService : MediaLibraryService() {
             // A queue edit can change what follows gaplessly, and the loudness
             // stage switches to that track on its own at the boundary.
             activeLoudness().nextMediaId = nextMediaIdOf(exoPlayer)
+            warmLoudnessFigures(exoPlayer)
             if (reason == Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED) {
                 castPlayback.onLocalQueueChanged()
                 saveQueueSnapshot(exoPlayer)
@@ -1754,7 +1761,19 @@ class PlaybackService : MediaLibraryService() {
             // the session player at the handoff — so the incoming track is
             // levelled on its own sink before it renders a frame, and the
             // outgoing track keeps its own gain for the rest of the blend.
-            onArmIncoming = { item, nextId -> spareLoudness().track(item.mediaId, nextId) },
+            onArmIncoming = { item, nextId ->
+                spareLoudness().track(item.mediaId, nextId)
+                // One line per transition, so a report of the level jumping as
+                // a blend starts can be told apart from a figure that is missing.
+                TrackLog.d(
+                    "BitChord",
+                    "transition armed: incoming ${loudnessLabel(item.mediaId)}; " +
+                        "outgoing ${loudnessLabel(player?.currentMediaItem?.mediaId)}",
+                    about = item.mediaId,
+                )
+                // Last chance for a figure the track change did not get to.
+                player?.let(::warmLoudnessFigures)
+            },
             versionSwapActive = { versionSwapJob?.isActive == true },
         )
 
@@ -2869,6 +2888,7 @@ class PlaybackService : MediaLibraryService() {
         // is precisely what carries the applied gain across the swap.
         setupLoudness(mediaItem?.mediaId)
         scheduleLoudnessRetry(mediaItem?.mediaId)
+        warmLoudnessFigures(exoPlayer)
 
         // Keep a real, bounded history in the player rather than merely hiding
         // old rows in Compose. MediaController mirrors the playlist across the
@@ -5987,8 +6007,12 @@ class PlaybackService : MediaLibraryService() {
             AppSettings.spatialAudio.collect { applySpatialAudioEnabled() }
         }
         scope.launch {
+            // Also the first look at a queue restored on launch, which reaches
+            // here before anything plays: its first collection runs once the
+            // service has finished setting up.
             AppSettings.loudnessNormalization.collect {
                 setupLoudness(player?.currentMediaItem?.mediaId)
+                player?.let(::warmLoudnessFigures)
             }
         }
         scope.launch {
@@ -6139,6 +6163,57 @@ class PlaybackService : MediaLibraryService() {
             delay(LOUDNESS_RETRY_MS)
             if (player?.currentMediaItem?.mediaId == id) publishLoudnessFor(id)
         }
+    }
+
+    /**
+     * Gets the loudness figure for the playing track and the one after it
+     * before either is heard, where nothing else will.
+     *
+     * [loudnessGainFor] can only level a track [StreamResolver] has resolved
+     * in this process, and a cache hit never resolves one: [AudioCache] serves
+     * the bytes without asking. Read-ahead does not close the gap either: it
+     * fetches the next track's bytes rather than its URL. So a song already on
+     * disk from an earlier session, which the cache makes more likely the
+     * longer the app is used, played at unity gain between songs that were
+     * levelled: often several decibels louder than the one before it, heard
+     * as the volume jumping as a transition into it began. A figure that only
+     * arrived a few seconds into a song turned it down a few seconds in.
+     *
+     * Resolving the stream is the only way to the figure, and it is the call
+     * read-ahead already makes for the tracks after the next one. Made here for
+     * these two as well, only while normalization is on and the figure is
+     * still missing, and at most once a minute per track: this is called on
+     * every queue edit, and a track that will not resolve (offline, say)
+     * should cost one failed request, not one per edit.
+     */
+    private fun warmLoudnessFigures(exoPlayer: ExoPlayer) {
+        if (!AppSettings.loudnessNormalization.value) return
+        val next = exoPlayer.nextMediaItemIndex
+            .takeIf { it != C.INDEX_UNSET && it < exoPlayer.mediaItemCount }
+            ?.let(exoPlayer::getMediaItemAt)
+        val now = SystemClock.elapsedRealtime()
+        for (item in listOfNotNull(exoPlayer.currentMediaItem, next)) {
+            val id = item.mediaId
+            val uri = item.localConfiguration?.uri
+            if (!LoudnessWarmup.wanted(uri?.scheme, uri?.authority, StreamResolver.loudnessDbFor(id) != null)) continue
+            val last = loudnessWarmups[id]
+            if (last != null && now - last < LOUDNESS_WARMUP_RETRY_MS) continue
+            loudnessWarmups[id] = now
+            scope.launch {
+                withContext(Dispatchers.IO) { runCatching { StreamResolver.resolve(id) } }
+                    .onFailure { TrackLog.d("BitChord", "loudness warm-up failed: ${it.message}", about = id) }
+                // The readout follows the figure for the track playing now.
+                if (player?.currentMediaItem?.mediaId == id) publishLoudnessFor(id)
+            }
+        }
+    }
+
+    /** What a track's level looks like to the transition log: its figure and the gain applied, or why there is none. */
+    private fun loudnessLabel(mediaId: String?): String {
+        if (!AppSettings.loudnessNormalization.value) return "normalization off"
+        val figure = mediaId?.takeIf { it.isNotBlank() }?.let(StreamResolver::loudnessDbFor) ?: return "figure unknown"
+        val gainDb = (loudnessGainMb(mediaId) ?: 0) / 100f
+        return "figure %.1f dB, gain %.1f dB".format(Locale.ROOT, figure, gainDb)
     }
 
     private fun observeScrobbling() {
@@ -8069,6 +8144,9 @@ class PlaybackService : MediaLibraryService() {
 
         /** How long [scheduleLoudnessRetry] waits for a still-resolving figure. */
         const val LOUDNESS_RETRY_MS = 6_000L
+
+        /** The least time between two attempts by [warmLoudnessFigures] at one track's figure. */
+        const val LOUDNESS_WARMUP_RETRY_MS = 60_000L
 
         /**
          * How long a Discord teardown may spend clearing the presence before the

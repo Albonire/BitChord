@@ -1197,7 +1197,7 @@ class CrossfadeController(
                 "style=${render.style} bassSwap=${render.bassSwap}@${render.swapAt} " +
                 "advanced=${render.advanced} lock=${render.phaseLock} handoff=${render.handoffAt} " +
                 "echo=${if (render.echo) "${render.echoSecondsF}s@${render.echoAt}" else "off"} " +
-                "sweep=${render.filterSweep}",
+                "sweep=${render.filterSweep} lead=${tracks.outgoingLeadMs()}ms",
         )
 
         holdAtEnd(out)
